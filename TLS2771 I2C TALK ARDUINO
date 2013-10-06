@@ -1,0 +1,84 @@
+#include <Wire.h>
+
+void setup()
+{
+  Serial.begin(9600);  // start serial for output
+  TSL2771Start(20);    // chip startup
+}
+
+void loop()
+{
+
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x97);             //Write to selected Register, SEE DATASHEET
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(0x39); 
+  Wire.requestFrom(0x39,1);
+  
+  int c = Wire.read(); 
+  Serial.println(c, DEC);         
+
+  Wire.endTransmission();
+  delay(500);
+}
+
+/*
+ * ======================================================
+ * TSL2771 Initialization
+ * Turns on the sensor and sets integration time
+ * ======================================================
+*/
+void TSL2771Start(int delay1){
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x80); //1000 0000 //write to ENABLE register
+  Wire.write(0x00); //0000 0000 //Disable and Powerdown
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x81); //1000 0001 //write to ATIME register
+  Wire.write(0xff); //1111 1111 //2.72ms - minimum ALS integration time
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x82); //1000 0010 //write to PTIME register
+  Wire.write(0xff); //1111 1111 //2.72ms - minimum prox integration time
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x83); //1000 0011 //write to WTIME register
+  Wire.write(0xff); //1111 1111 //2.72ms - minimum wait time
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x8e); //1000 1110 //write to PPCOUNT register
+  Wire.write(0x01); //0000 0001 //Minimum prox pulse count
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x8f); //1000 1111 //write to CONTROL register
+  Wire.write(0x20); //0010 0000 //Proximity uses the IR diode
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  
+  Wire.beginTransmission(0x39); //slave address: 0011 1001
+  Wire.write(0x80); //1000 0000 //write to ENABLE register
+  Wire.write(0x0f); //0000 1111 //Enable Wait, Prox, ALS, Power ON
+  Wire.endTransmission();
+  
+  delay(delay1);//time to set transmission
+  Serial.println("TSL2771 READY TO USE");
+}
+

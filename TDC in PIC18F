@@ -1,0 +1,163 @@
+/*
+ * Project name:
+     Prueba 4: Modo directo para TDC(TIME TO DIGITAL CONVERTER) con LUT
+ * Copyright:
+     Lars E. Bengtsson
+ * Description:
+     Se emulan los resultados del trabajo de Lars E. Bengtsson, sobre la creación de un TDC
+     utilizando un microcontrolador de 8 bits, aprovechando sus interrupciones y contadores.
+     utilizando también componentes pasivos para realizar el estiramiento de tiempo.
+
+     Se implementa la programación secuencial para que se realice el algorito una vez completa
+     sin que nada mas se realice.
+
+     Se implementa el TIMER0 como un contador para digitalizar el valor del pulso obtenido
+     
+     Finalmente se utiliza un LUT junto con interpolación lineal para obtener los valores
+     de tiempo que servirán para mostrar la distancia de los objetos
+ * Test configuration:
+     MCU:             PIC18F45K22
+                      http://ww1.microchip.com/downloads/en/DeviceDoc/41412D.pdf
+     dev.board:       EasyPIC v7
+                      http://www.mikroe.com/eng/products/view/757/easypic-v7-development-system/
+     Oscillator:      20.0000 MHz Crystal
+*/
+
+bit flag;
+unsigned int timerL;
+unsigned int timerH;
+
+int tau;
+char tex[7];
+char prueba;
+
+// LOCK UP TABLE
+const int lut[256] = {  10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160,
+                        10,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 120, 130, 140, 150, 160};
+
+void init(){
+
+
+                               // CONFIGURACION DE PUERTOS
+  ANSELB = 0;                  // Configure PORTB pins as digital
+  TRISB  = 0b00010111;         // Set PORTB as input, except RB3 (Para debug RB5,RB6 y RB7)
+  PORTB  = 0x00;               // Set PORTB LOW
+
+  ANSELC = 0;                  // Configure PORTC pins as digital
+  ANSELD = 0;                  // Configure PORTD pins as digital
+  ANSELE = 0;                  // Configure PORTE pins as digital
+  TRISC  = 0b00000010;         // Set PORTC, RC6 TX, RC7 RX
+  TRISD  = 0x00;               // Set PORTD as output
+  TRISE  = 0x00;               // Set PORTE as output
+  PORTC  = 0x00;               // Set PORTC LOW
+  PORTD  = 0x00;               // Set PORTD LOW
+  PORTE  = 0x00;               // Set PORTE LOW
+
+  RBIE_bit  = 1;               // Enable Port B Interrupt-On-Change
+  IOCB4_bit = 1;               // Enable RB4 interrupt pin
+  IOCB5_bit = 1;               // Disable RB5 interrupt pin
+  IOCB6_bit = 1;               // Disable RB6 interrupt pin
+  IOCB7_bit = 1;               // Disable RB7 interrupt pin
+  RBIF_bit  = 0;               // Clear IOC flag
+  GIE_bit   = 1;               // Enable GLOBAL interrupts
+  timerL    = 0;               // Timer
+  timerH    = 0;               // Timer
+  flag      = 0;               // Inicializacion de variables
+
+                               // CONFIGURACION DE TIMER0
+  T0CON.T08BIT = 0;            // TIMER0 is configured as 16 bits timer
+  T0CON.T0CS   = 0;            // Internal Instruction Cicle Clock (select as timer)
+  T0CON.PSA    = 1;            // TIMER0 prescaler  assigned
+  T0CON.b0 = 0;                // Prescaler establecido a 256
+  T0CON.b1 = 0;
+  T0CON.b2 = 0;
+                               // CONFIGURACIÓN DE PUERTO SERIAL
+  // Initialize hardware UART1 and establish communication at 9600 bps
+  UART1_Init(9600);
+}
+
+void interrupt(){              // Interrupt rutine
+  RBIE_bit  = 0;               // Disable Port B Interrupt-On-Change
+  if(PORTB.RB4 == 1) {
+    if(RBIF_bit == 1) {        // Checks for Receive Interrupt Flag bit
+      flag     = 1;            // Set local interrupt flag
+      PORTB.RB6 = ~PORTB.RB6;
+    }
+  }
+  if(INTCON.TMR0IF == 1){
+    INTCON.TMR0IF = 0;         // Bit T0IF is cleared so that the interrupt could reoccur
+    PORTB.RB5 = ~PORTB.RB5;
+  }
+}
+
+void main() {                  // Ciclo principal
+
+     init();                   // Inicialización
+
+  while(1) {
+                               // ***ALGORITMO PRINCIPAL DE TDC IMPLEMENTADO***
+  TRISB.RB1 = 1;               // Configurar RB1 como entrada, HIGH Z
+  RBIE_bit  = 1;               // Enable Port B Interrupt-On-Change
+
+  while(RBIF_bit == 0){        // Espera a la interrupción del puerto B
+     asm NOP;
+  }
+  RBIF_bit = 0;                // Clear Interrupt Flag
+
+  while(PORTB.RB0==1){         // Carga el capacitor hasta que se detecte el bajada del pulso de entrada
+     asm NOP;
+  }
+
+  TRISB.RB1 = 0;               // Configurar RB1 como salida
+  PORTB.RB1 = 0;               // Setea a RB1 en estado LOW para descargar capacitor
+  
+  PORTB.RB3 = 1;               // Empieza el estiramiento del pulso
+  T0CON.TMR0ON = 1;            // Enable TIMER0
+
+  while(PORTB.RB2==1){         // Se implementa el estiramiento del pulso
+     asm NOP;
+  }
+  PORTB.RB3 = 0;               // Termina el estiramiento del pulso
+  T0CON.TMR0ON = 0;            // Disable TIMER0
+  
+  if (flag == 1){
+    timerL       = TMR0L;        // Asigna valor de timer0 a una variable
+    timerH       = TMR0H;        // Asigna valor de timer0 a una variable
+    TMR0H        = 0;            // Resetea el timer0
+    TMR0L        = 0;            // Resetea el timer0
+    
+    PORTD        = timerL;       // Se le asigna el valor del timer al portC para debug
+    PORTE        = timerH;       // Se le asigna el valor del timer al portD para debug
+    
+    // IMPLEMENTACIÓN DE INTERPOLACION LINEAL
+    UART1_Write(timerL);
+    
+    timerL = (256*timerH) +timerL;
+    tau = ((timerL-256*timerH)*(lut[timerH+1]-lut[timerH])/256)+1*lut[timerH];
+    //tau = 10*tau;
+
+    UART1_Write(timerH);
+
+    UART1_Write(lut[timerH]);
+    UART1_Write(lut[timerH+1]);
+    UART1_Write(tau);
+    UART1_Write(0);
+
+    }
+  flag           = 0;
+  }
+}
